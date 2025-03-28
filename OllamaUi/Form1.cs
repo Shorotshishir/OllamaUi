@@ -1,10 +1,9 @@
-using System.Text;
-using OllamaSharp;
-using OllamaSharp.Models;
+using OllamaUi.Interfaces;
+using OllamaUi.Presenters;
 
 namespace OllamaUi;
 
-public partial class Form1 : Form
+public partial class Form1 : Form, IOllamaResponseHandler, IMainFormView
 {
     private Button button1;
     private Button button2;
@@ -14,23 +13,19 @@ public partial class Form1 : Form
     private TextBox textBox2;
     private ComboBox comboBox1;
 
-    private Dictionary<string, Model> _ollamaModels = new();
-    private readonly OllamaApiClient oClient;
-    private readonly StringBuilder _stringBuilder = new();
-
-
-    private int _clickCount = 0;
-    private int _doubleClickCount = 0;
 
     private int _pad = 10;
     private int _buttonHeight = 30;
+    
+    private readonly OllamaService _ollamaService;
+    private readonly MainFormPresenter _presenter;
 
     public Form1()
     {
         InitializeComponent();
+        _ollamaService = new OllamaService(this);
+        _presenter = new MainFormPresenter(_ollamaService, this);
         DefaultOverrides();
-        var uri = new Uri("http://localhost:11434");
-        oClient = new OllamaApiClient(uri);
         AddControls();
     }
 
@@ -112,98 +107,52 @@ public partial class Form1 : Form
 
     private void ComboBox1OnSelectionChangeCommitted(object? sender, EventArgs e)
     {
-        var index = comboBox1.SelectedIndex;
-        Console.WriteLine(index);
-        var selectedModel = _ollamaModels.Values.ElementAt(index);
-        Console.WriteLine(selectedModel.Name);
-        SetModel(selectedModel);
-    }
-
-    private void SetModel(Model selectedModel)
-    {
-        oClient.SelectedModel = selectedModel.Name;
+        _presenter.SelectModel(comboBox1.SelectedIndex);
     }
 
     private async void button2_ConnectionTest(object? sender, EventArgs e)
     {
-        var list = await oClient.ListLocalModelsAsync();
-        _ollamaModels = list.ToDictionary(x => x.Name, x => x);
-        var llmNameList = _ollamaModels.Keys.ToArray();
-        Console.WriteLine(llmNameList[0]);
-        comboBox1.Items.Clear();
-        comboBox1.Items.AddRange(llmNameList);
+        await _presenter.LoadModels();
     }
 
     private async void button1_AskLlm(object? sender, EventArgs e)
     {
-        await MakeQuery(textBox1.Text);
-        // UpdateLabel($"you clicked {_clickCount}");
-    }
-
-    private async Task MakeQuery(string prompt)
-    {
-        if (oClient == null) UpdateLabel("Ollama Client not Ready");
-        if (string.IsNullOrWhiteSpace(oClient.SelectedModel))
-        {
-            UpdateLabel("No Model Selected");
-            return;
-        }
-
-        if (prompt == string.Empty)
-        {
-            UpdateLabel("Prompt is empty");
-            return;
-        }
-
-        textBox2.Text = string.Empty;
-        await foreach (var stream in oClient.GenerateAsync(prompt))
-        {
-            _stringBuilder.Append(stream.Response);
-            UpdateStreamingText(stream.Response);
-        }
-
-        // UpdateLabel(_stringBuilder.ToString());
-
-        _stringBuilder.Clear();
-    }
-
-    private void UpdateStreamingText(string streamResponse)
-    {
-        textBox2.Text += streamResponse;
-        textBox2.Refresh();
+        await _presenter.HandlePrompt(textBox1.Text);
     }
 
     private void button2_CheckOllamaExists(object? sender, EventArgs e)
     {
-        UpdateLabel(ExistsOnPath("ollama.exe")
-            ? "Ollama exists on path"
-            : "Ollama does not exist on path");
+        _presenter.CheckOllamaInstallation();
     }
 
-    private static bool ExistsOnPath(string fileName)
-    {
-        return GetFullPath(fileName) != string.Empty;
-    }
-
-    private static string GetFullPath(string fileName)
-    {
-        if (File.Exists(fileName))
-            return Path.GetFullPath(fileName);
-
-        var values = Environment.GetEnvironmentVariable("PATH");
-        foreach (var path in values.Split(Path.PathSeparator))
-        {
-            var fullPath = Path.Combine(path, fileName);
-            if (File.Exists(fullPath))
-                return fullPath;
-        }
-
-        return string.Empty;
-    }
-
-
-    private void UpdateLabel(string message)
+    /// <inheritdoc />
+    public void UpdateStatus(string message)
     {
         label1.Text = message;
     }
+
+    /// <inheritdoc />
+    public void UpdateResponse(string? streamResponse)
+    {
+        if (streamResponse == null) return;
+        textBox2.Text += streamResponse;
+        textBox2.Refresh();
+    }
+
+    /// <inheritdoc />
+    public void OnError(string message) => UpdateStatus(message);
+
+    /// <inheritdoc />
+    public void OnResponse(string response) => UpdateResponse(response);
+
+
+    /// <inheritdoc />
+    public void UpdateModelList(string[] models)
+    {
+        comboBox1.Items.Clear();
+        comboBox1.Items.AddRange(models);
+    }
+
+    /// <inheritdoc />
+    public void ClearResponse() => textBox2.Clear();
 }
